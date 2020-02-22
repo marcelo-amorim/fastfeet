@@ -3,8 +3,7 @@ import * as Yup from 'yup';
 import Recipient from '../models/Recipient';
 
 class RecipientsController {
-
-  async list(req, res){
+  async list(req, res) {
     const recipients = await Recipient.findAll();
     return res.json(recipients);
   }
@@ -36,12 +35,9 @@ class RecipientsController {
   }
 
   async update(req, res) {
-
     const recipientSchema = Yup.object().shape({
-      name: Yup.string()
-        .min(3, 'Name is to short (Min. 3 chars).'),
-      address: Yup.string()
-        .min(4, 'Address field is too short.'),
+      name: Yup.string().min(3, 'Name is to short (Min. 3 chars).'),
+      address: Yup.string().min(4, 'Address field is too short.'),
       street_number: Yup.string(),
       complement: Yup.string(),
       city: Yup.string(),
@@ -52,11 +48,12 @@ class RecipientsController {
     await recipientSchema.validate(req.body).catch(err => {
       return res.status(400).json({ errors: err.errors });
     });
-    const {id} = req.params;
+
+    const { id } = req.params;
     const recipient = await Recipient.findByPk(id);
 
-    if (!recipient){
-      return res.status(400).json( {errors: ['Recipient not found.']})
+    if (!recipient) {
+      return res.status(400).json({ errors: ['Recipient not found.'] });
     }
 
     await recipient.update(req.body);
