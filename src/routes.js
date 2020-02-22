@@ -4,12 +4,12 @@ import multerConfig from './config/multer';
 
 import SessionController from './app/controllers/SessionController';
 import RecipientsController from './app/controllers/RecipientsController';
+import FileController from './app/controllers/FileController';
 
 import authMiddleware from './app/middlewares/auth';
 
 const routes = new Router();
-const upload  = multer(multerConfig);
-
+const upload = multer(multerConfig);
 
 routes.post('/sessions', SessionController.store);
 
@@ -19,8 +19,6 @@ routes.get('/recipients', RecipientsController.list);
 routes.post('/recipients', RecipientsController.store);
 routes.put('/recipients/:id', RecipientsController.update);
 
-routes.post('/files', upload.single('file'), (req, res) => {
-  return res.json({ok: true})
-})
+routes.post('/files', upload.single('file'), FileController.store);
 
 export default routes;
