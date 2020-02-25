@@ -17,6 +17,13 @@ class Recipient extends Model {
       }
     );
   }
+
+  static associate(models) {
+    this.hasMany(models.Delivery, {
+      foreignKey: 'recipient_id',
+      as: 'recipient',
+    });
+  }
 }
 
 export default Recipient;
