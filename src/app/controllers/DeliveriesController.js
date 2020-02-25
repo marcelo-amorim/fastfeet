@@ -9,7 +9,10 @@ import {
   parseISO,
   startOfDay,
   endOfDay,
+  format,
 } from 'date-fns';
+import pt from 'date-fns/locale/pt';
+
 import { Op } from 'sequelize';
 // import { format, zonedTimeToUtc, utcToZonedTime } from 'date-fns-tz';
 
@@ -17,6 +20,8 @@ import Deliveries from '../models/Delivery';
 import Recipients from '../models/Recipient';
 import Deliverymen from '../models/Deliveryman';
 import File from '../models/File';
+
+import Mail from '../../lib/Mail';
 
 class DeliveriesController {
   async index(req, res) {
@@ -144,9 +149,9 @@ class DeliveriesController {
       product: Yup.string(),
       start_date: Yup.date(),
       end_date: Yup.date(),
-      recipient_id: Yup.string(),
-      deliveryman_id: Yup.string(),
-      signature_id: Yup.string(),
+      recipient_id: Yup.number(),
+      deliveryman_id: Yup.number(),
+      signature_id: Yup.number(),
     });
 
     await deliverySchema.validate(req.body).catch(err => {
@@ -208,9 +213,12 @@ class DeliveriesController {
       const requestedEndDate = parseISO(end_date);
       if (isBefore(requestedEndDate, delivery.start_date)) {
         return res.status(400).json({
-          error: 'Cannot set end date before start date',
+          error: 'Cannot set ending date before start date',
         });
       }
+
+      delivery.end_date = requestedEndDate;
+      // delivery.save();
     }
 
     /**
@@ -245,6 +253,22 @@ class DeliveriesController {
             `The requested deliveryman ${deliveryman.name} has reached the limit of ${maximumDeliveries} deliveries of the day`
           );
       }
+      delivery.deliveryman_id = deliveryman_id;
+      // delivery.save();
+
+      // const formattedDate = format(
+      //   parseISO(delivery.date),
+      //   "'dia' dd 'de' MMMM, 'às' H:mm'h'",
+      //   {
+      //     locale: pt,
+      //   }
+      // );
+
+      Mail.sendMail({
+        to: `${deliveryman.name} <${deliveryman.email}>`,
+        subject: `Olá ${deliveryman.name}, você tem uma nova entrega!`,
+        text: 'Você tem uma nova entrega a ser realizada.',
+      });
     }
 
     delivery.update(req.body);
