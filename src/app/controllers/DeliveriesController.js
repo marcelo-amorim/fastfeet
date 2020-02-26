@@ -1,127 +1,44 @@
 import * as Yup from 'yup';
+import { Op } from 'sequelize';
 import {
-  isBefore,
-  isAfter,
-  setHours,
-  setMinutes,
-  setSeconds,
-  startOfHour,
-  parseISO,
   startOfDay,
   endOfDay,
-  format,
+  setSeconds,
+  setMinutes,
+  setHours,
+  parseISO,
+  isBefore,
+  isAfter,
+  differenceInSeconds,
 } from 'date-fns';
-import pt from 'date-fns/locale/pt';
-
-import { Op } from 'sequelize';
-// import { format, zonedTimeToUtc, utcToZonedTime } from 'date-fns-tz';
 
 import Deliveries from '../models/Delivery';
+import Deliveryman from '../models/Deliveryman';
 import Recipients from '../models/Recipient';
-import Deliverymen from '../models/Deliveryman';
 import File from '../models/File';
-
-import Mail from '../../lib/Mail';
 
 class DeliveriesController {
   async index(req, res) {
-    const whereStatement = { canceled_at: null };
+    const { deliveryman_id } = req.params;
 
-    if (req.params.id) whereStatement.id = req.params.id;
-
-    const orders = await Deliveries.findAll({
-      where: whereStatement,
-    });
-
-    return res.json(orders);
-  }
-
-  async store(req, res) {
-    const deliverySchema = Yup.object().shape({
-      recipient_id: Yup.string().required(),
-      deliveryman_id: Yup.string().required(),
-      product: Yup.string().required(),
-      start_date: Yup.date().required(),
-    });
-
-    await deliverySchema.validate(req.body).catch(err => {
-      return res.status(400).json({ error: err.errors });
-    });
-
-    const { deliveryman_id, recipient_id, start_date } = req.body;
-    const today = new Date();
-    const requestedDate = parseISO(start_date);
-    /**
-     * Check for past dates
-     */
-    const hourStart = startOfHour(requestedDate);
-    if (isBefore(hourStart, today)) {
-      return res.status(400).json({ error: 'Past dates are not permitted.' });
-    }
-
-    const { OFFICE_HOUR_START } = process.env;
-    const [ofshour, ofsminute] = OFFICE_HOUR_START.split(':');
-    const officeOpening = setSeconds(
-      setMinutes(setHours(requestedDate, ofshour), ofsminute),
-      0
-    );
-
-    const { OFFICE_HOUR_END } = process.env;
-    const [ofehour, ofeminute] = OFFICE_HOUR_END.split(':');
-    const officeEnds = setSeconds(
-      setMinutes(setHours(requestedDate, ofehour), ofeminute),
-      0
-    );
-    if (
-      isBefore(requestedDate, officeOpening) ||
-      isAfter(requestedDate, officeEnds)
-    ) {
-      return res.status(400).json({
-        error: `New orders are allowed from ${OFFICE_HOUR_START}:00 to ${OFFICE_HOUR_END}:00`,
-      });
-    }
-
-    /**
-     * Checks for recipient and if it's already in another delivery
-     */
-    const recipient = await Recipients.findByPk(recipient_id);
-    if (!recipient) {
-      return res.status(404).json({ error: `Recipient not found` });
-    }
-
-    /**
-     * Checks for deliveryman and if he exceeds maximum deliveries
-     */
-    const deliveryman = await Deliverymen.findByPk(deliveryman_id);
+    const deliveryman = await Deliveryman.findByPk(deliveryman_id);
     if (!deliveryman) {
       return res.status(404).json({ error: `Deliveryman not found` });
     }
 
-    const deliveriesOfDay = await Deliveries.findAndCountAll({
-      where: {
-        deliveryman_id,
-        canceled_at: null,
-        start_date: {
-          [Op.between]: [
-            startOfDay(Number(requestedDate)),
-            endOfDay(Number(requestedDate)),
-          ],
-        },
-      },
-    });
-
-    const maximumDeliveries = process.env.MAX_DELIVERIES_DAY;
-    if (deliveriesOfDay.count >= maximumDeliveries) {
-      return res
-        .status(400)
-        .json(
-          `Deliveryman ${deliveryman.name} has reached the limit of deliveries ${maximumDeliveries} of the day`
-        );
+    const whereStatement = {
+      deliveryman_id,
+      canceled_at: null,
+      end_date: null,
+    };
+    const { delivered } = req.query;
+    if (typeof delivered !== 'undefined' && delivered) {
+      whereStatement.end_date = { [Op.not]: null };
     }
 
-    const delivery = await Deliveries.create(req.body);
-    const deliveryInfo = await Deliveries.findByPk(delivery.id, {
-      attributes: ['id', 'start_date', 'product', 'canceled_at'],
+    const deliveries = await Deliveries.findAll({
+      where: whereStatement,
+      attributes: ['product', 'start_date', 'end_date'],
       include: [
         {
           model: Recipients,
@@ -129,28 +46,26 @@ class DeliveriesController {
           attributes: { exclude: ['id', 'createdAt', 'updatedAt'] },
         },
         {
-          model: Deliverymen,
+          model: Deliveryman,
           as: 'deliveryman',
           attributes: ['name', 'email'],
-          include: [{ model: File, as: 'avatar' }],
+          include: [{ model: File, as: 'avatar', attributes: ['path'] }],
+        },
+        {
+          model: File,
+          as: 'signature',
+          attributes: ['path'],
         },
       ],
     });
 
-    return res.json(deliveryInfo);
+    return res.json(deliveries);
   }
 
   async update(req, res) {
-    const { id } = req.params;
-
-    if (!id) return res.status(400).json({ error: 'Delivery id not received' });
-
     const deliverySchema = Yup.object().shape({
-      product: Yup.string(),
       start_date: Yup.date(),
       end_date: Yup.date(),
-      recipient_id: Yup.number(),
-      deliveryman_id: Yup.number(),
       signature_id: Yup.number(),
     });
 
@@ -158,126 +73,136 @@ class DeliveriesController {
       return res.status(400).json({ error: err.errors });
     });
 
-    const delivery = await Deliveries.findByPk(id);
+    const { delivery_id, deliveryman_id } = req.params;
+    const { start_date, end_date, signature_id } = req.body;
+
+    const delivery = await Deliveries.findOne({
+      where: { id: delivery_id, deliveryman_id, canceled_at: null },
+      include: [
+        {
+          model: Deliveryman,
+          as: 'deliveryman',
+          attributes: ['name', 'email'],
+          include: [{ model: File, as: 'avatar', attributes: ['path'] }],
+        },
+      ],
+    });
     if (!delivery) {
       return res.status(404).json({ error: 'Delivery not found' });
     }
 
-    const { start_date, end_date, deliveryman_id } = req.body;
-
     /**
-     * Checks for start_date and validate it to the current date
+     * Delivery START: Checks for start_date and validate it to the current date
      */
     if (start_date) {
-      const requestedDate = parseISO(start_date);
-      const today = new Date();
-      /**
-       * Check for past dates
-       */
-      const hourStart = startOfHour(requestedDate);
-      if (isBefore(hourStart, today)) {
-        return res.status(400).json({ error: 'Past dates are not permitted.' });
-      }
+      if (delivery.start_date)
+        return res
+          .status(400)
+          .json({ error: `Delivery has already been started` });
+
+      const startingDate = parseISO(start_date);
 
       const { OFFICE_HOUR_START } = process.env;
       const [ofshour, ofsminute] = OFFICE_HOUR_START.split(':');
       const officeOpening = setSeconds(
-        setMinutes(setHours(requestedDate, ofshour), ofsminute),
+        setMinutes(setHours(startingDate, ofshour), ofsminute),
         0
       );
 
       const { OFFICE_HOUR_END } = process.env;
       const [ofehour, ofeminute] = OFFICE_HOUR_END.split(':');
       const officeEnds = setSeconds(
-        setMinutes(setHours(requestedDate, ofehour), ofeminute),
+        setMinutes(setHours(startingDate, ofehour), ofeminute),
         0
       );
       if (
-        isBefore(requestedDate, officeOpening) ||
-        isAfter(requestedDate, officeEnds)
+        isBefore(startingDate, officeOpening) ||
+        isAfter(startingDate, officeEnds)
       ) {
         return res.status(400).json({
-          error: `New orders are allowed from ${OFFICE_HOUR_START}:00 to ${OFFICE_HOUR_END}:00`,
+          error: `New deliveries are allowed from ${OFFICE_HOUR_START} to ${OFFICE_HOUR_END}`,
         });
       }
 
-      delivery.start_date = requestedDate;
-      delivery.save();
-    }
-
-    /**
-     * Checks if end_date is after start_date
-     */
-    if (end_date) {
-      // const startdate = parsedelivery.start_date;
-      const requestedEndDate = parseISO(end_date);
-      if (isBefore(requestedEndDate, delivery.start_date)) {
-        return res.status(400).json({
-          error: 'Cannot set ending date before start date',
-        });
-      }
-
-      delivery.end_date = requestedEndDate;
-      // delivery.save();
-    }
-
-    /**
-     * Checks for deliveryman and its availability
-     */
-    if (deliveryman_id && deliveryman_id !== delivery.deliveryman_id) {
-      const deliveryman = await Deliverymen.findByPk(deliveryman_id);
-      if (!deliveryman) {
-        return res
-          .status(404)
-          .json({ error: `Requested deliveryman not found` });
-      }
-
+      /**
+       * Checks if deliveryman exceeded maximum of deliveries
+       */
       const deliveriesOfDay = await Deliveries.findAndCountAll({
         where: {
           deliveryman_id,
           canceled_at: null,
           start_date: {
             [Op.between]: [
-              startOfDay(Number(delivery.start_date)),
-              endOfDay(Number(delivery.start_date)),
+              startOfDay(Number(startingDate)),
+              endOfDay(Number(startingDate)),
             ],
           },
         },
       });
-
       const maximumDeliveries = process.env.MAX_DELIVERIES_DAY;
       if (deliveriesOfDay.count >= maximumDeliveries) {
         return res
           .status(400)
           .json(
-            `The requested deliveryman ${deliveryman.name} has reached the limit of ${maximumDeliveries} deliveries of the day`
+            `Deliveryman ${delivery.deliveryman.name} has reached the limit of ${maximumDeliveries} deliveries per the day`
           );
       }
-      delivery.deliveryman_id = deliveryman_id;
-      // delivery.save();
 
-      // const formattedDate = format(
-      //   parseISO(delivery.date),
-      //   "'dia' dd 'de' MMMM, 'às' H:mm'h'",
-      //   {
-      //     locale: pt,
-      //   }
-      // );
+      /**
+       * Checks for tolerance in start date
+       */
+      const today = new Date();
+      const toleranceInSeconds = 60;
+      const difference = differenceInSeconds(today, startingDate);
+      if (Math.abs(difference) > toleranceInSeconds) {
+        return res.status(400).json({
+          err: `Past dates are not permitted`,
+          difference,
+        });
+      }
 
-      Mail.sendMail({
-        to: `${deliveryman.name} <${deliveryman.email}>`,
-        subject: `Olá ${deliveryman.name}, você tem uma nova entrega!`,
-        text: 'Você tem uma nova entrega a ser realizada.',
-      });
+      delivery.start_date = startingDate;
+      delivery.save();
+
+      return res.json({ message: `Delivery started successfully` });
     }
 
-    delivery.update(req.body);
+    /**
+     * Delivery END: checks for signature and its date
+     */
+    if (end_date) {
+      if (delivery.end_date) {
+        return res
+          .status(400)
+          .json({ error: `Delivery has already been done` });
+      }
+      /**
+       * Checks if delivery has already started
+       */
+      const endingDate = parseISO(end_date);
+      if (!isBefore(delivery.start_date, endingDate)) {
+        return res
+          .status(400)
+          .json({ error: `Ending date cannot be earlier than starting date` });
+      }
 
-    return res.json(delivery);
-  }
+      const signature = await File.findByPk(signature_id);
+      if (!signature) {
+        return res
+          .status(400)
+          .json({ error: `No signature was found to finish the delivery` });
+      }
 
-  async delete(req, res) {
-    return res.json();
+      delivery.end_date = endingDate;
+      delivery.signature_id = signature.id;
+      delivery.save();
+
+      return res.json({ message: `Delivery done!` });
+    }
+
+    return res
+      .status(500)
+      .json({ error: `Could not start or finish delivery` });
   }
 }
 
