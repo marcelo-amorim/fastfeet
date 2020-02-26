@@ -6,7 +6,8 @@ import Deliveryman from '../models/Deliveryman';
 import Recipient from '../models/Recipient';
 import File from '../models/File';
 
-import Mail from '../../lib/Mail';
+import DeliveryCancellationMail from '../jobs/DeliveryCancellationMail';
+import Queue from '../../lib/Queue';
 
 class DeliveryProblemsController {
   async index(req, res) {
@@ -77,8 +78,6 @@ class DeliveryProblemsController {
       return res.status(404).json({ error: `Problem not found` });
     }
 
-    // return res.json(problem);
-
     const delivery = await Delivery.findByPk(problem.delivery_id, {
       include: {
         model: Deliveryman,
@@ -90,20 +89,22 @@ class DeliveryProblemsController {
     if (!delivery) {
       return res
         .status(404)
-        .json({ error: `Delivery was not found to cancel.` });
+        .json({ error: `Delivery has not been found to cancel.` });
+    }
+
+    if (delivery.canceled_at) {
+      return res
+        .status(400)
+        .json({ error: `Delivery has already been canceled` });
     }
 
     delivery.canceled_at = new Date();
-    delivery.save();
+    await delivery.save();
 
     /**
-     * Notifies deliveryman he has a new shipment to deliver
+     * Notifies deliveryman his delivery has been cancelled
      */
-    Mail.sendMail({
-      to: `${delivery.deliveryman.name} <${delivery.deliveryman.email}>`,
-      subject: `Entrega cancelada!`,
-      text: `Hello ${delivery.deliveryman.name}, the deliver #${delivery.id} was cancelled because of: ${problem.description}`,
-    });
+    await Queue.add(DeliveryCancellationMail.key, { delivery });
 
     return res.status(200).json();
   }

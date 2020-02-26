@@ -19,7 +19,8 @@ import Recipients from '../models/Recipient';
 import Deliverymen from '../models/Deliveryman';
 import File from '../models/File';
 
-import Mail from '../../lib/Mail';
+import Queue from '../../lib/Queue';
+import NewDeliveryMail from '../jobs/NewDeliveryMail';
 
 class ShipmentsController {
   async index(req, res) {
@@ -85,13 +86,9 @@ class ShipmentsController {
     /**
      * Notifies deliveryman he has a new shipment to deliver
      */
-    Mail.sendMail({
-      to: `${deliveryman.name} <${deliveryman.email}>`,
-      subject: `Olá ${deliveryman.name}, você tem uma nova entrega!`,
-      text: 'Você tem uma nova entrega a ser realizada.',
-    });
+    Queue.add(NewDeliveryMail.key, { deliveryman });
 
-    return res.json(deliveryInfo);
+    return res.json(deliveryInfo.deliveryman);
   }
 
   async update(req, res) {
