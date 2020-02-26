@@ -204,8 +204,8 @@ class ShipmentsController {
        */
       Mail.sendMail({
         to: `${deliveryman.name} <${deliveryman.email}>`,
-        subject: `Olá ${deliveryman.name}, você tem uma nova entrega!`,
-        text: 'Você tem uma nova entrega a ser realizada.',
+        subject: `Hello ${deliveryman.name}, You've got a new delivery!`,
+        text: `You've got a new delivery to be made.`,
       });
     }
 
